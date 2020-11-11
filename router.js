@@ -39,7 +39,7 @@ function postToPorts(port, path, jsonData) {
     req.end;
 }
 
-// 内容授权/许可证请求端口
+// 内容授权/许可证请求licenseRequest端口
 router.post('/contentAuth', (req, res) =>{
     //console.log('get /licenseReq POST request: ',req.body);
     //licenseRsp = contentAuth.reqAnalyze(JSON.stringify(req.body));
@@ -49,7 +49,7 @@ router.post('/contentAuth', (req, res) =>{
         || req.body.supportedAlgorithms !== "KMSProfile1")
         res.send("API error! Please check the data.");
     else{
-        let keyInquireData = {
+        let keyInquireReq = {
             deviceID : req.body.deviceID,
             nonce : req.body.nonce,
             requestTime : req.body.requestTime,
@@ -58,76 +58,53 @@ router.post('/contentAuth', (req, res) =>{
             certificateChain : req.body.certificateChain,
             signature : req.body.signature
         };
-        postToPorts(8082, '/keyInquire', keyInquireData);
+        postToPorts(8082, '/keyGateWay', keyInquireReq);
     }
 });
 
-// 密钥查询端口
-router.post('/keyInquire', (req, res) =>{
+// 密钥网关端口, contentAuth 向 keyGateWay 发起密钥请求的POST请求
+router.post('/keyGateWay', (req, res) =>{
     //console.log('get /licenseReq POST request: ',req.body);
     //licenseRsp = contentAuth.reqAnalyze(JSON.stringify(req.body));
     //res.send(licenseRsp);
-    if(req.body.type !== "licenseRequest"
-        || req.body.version !== "2.0"
+    if(req.body.type !== "keyRequest"
+        || req.body.version !== "1.0"
+        || req.body.drmServerID !== "base64_string"
         || req.body.supportedAlgorithms !== "KMSProfile1")
         res.send("API error!");
     else{
-        let deviceID = req.body.deviceID;
-        let nonce = req.body.nonce;
-        let requestTime = req.body.requestTime;
-        let contentIDs = req.body.contentIDs;
-        let extensions = req.body.extensions;
-        let certificateChain = req.body.certificateChain;
-        let signature = req.body.signature;
+        let dataCheckReq = {
+            contentIDs : req.body.contentIDs,
+            drmClientCertificate : req.body.drmClientCertificate,
+            certificateChain : req.body.certificateChain,
+            signature : req.body.signature
+        };
+        // TODO:查询query接口的data是不是匹配
+        postToPorts(8082, '/sqlAPI/query', dataCheckReq);
     }
 });
 
-let keySyncRes = {
-    "type":"keySyncRequest",
-    "version":"1.0",
-    "kmsID":"c2RmYWRmYWVkYWZzZA",
-    "nonce":"375",
-    "selectedAlgorithm":"AES",
-    "contentInfos":[
-        {
-            "contentID":"2",
-            "ceks":[
-                {
-                    "cekID":"2",
-                    "encCEK":"Y2hhaW4xMg",
-                    "startTime":"1",
-                    "endTime":"100"
-                }],
-            "contentRules":"2"
-        },
-    ],
-    "certificateChain":["Chain1","Y2hhaW4xMg==",],
-    "signature":"emhlamlhbmd1bml2ZXJzaXR5eGRsMjIw"
-};
-// GET ?动态查询参数
-app.get('/keySync', (req, res, next) =>{
-    console.log('get /keySync GET request');
-    console.log(req.query);
-    res.send(keySyncRes);
-});
-
 //TODO: POST json格式发送数据, 通过body获取内容, 密钥管理向网关发起同步请求, 在mysql中添加密钥内容
-app.post('/keySync', (req, res, next) =>{
-    console.log('get /keySync POST request');
-    console.log(req.body.name);
-    keySyncRsp = keyGateWay.add(JSON.stringify(keySyncRes));
-    res.send(keySyncRsp);
-});
-// contentAuth 向 keyGateWay 发起密钥同步POST请求
-app.post('/keyInquire', (req, res, next) =>{
-    console.log('get /keyInquire POST request');
-    keyInquireRsp = keyGateWay.select('test',
-        'contentID, sessionKeyID, encSessionKey, cekID, encCEK, contentRules, duration',
-        'drm_tb');
-    res.send(keyInquireRsp);
+router.post('/keySync', (req, res, next) =>{
+    if(req.body.type !== "keyRequest"
+        || req.body.version !== "1.0"
+        || req.body.drmServerID !== "base64_string"
+        || req.body.supportedAlgorithms !== "KMSProfile1")
+        res.send("API error!");
+    else{
+        let dataCheckReq = {
+            contentIDs : req.body.contentIDs,
+            drmClientCertificate : req.body.drmClientCertificate,
+            certificateChain : req.body.certificateChain,
+            signature : req.body.signature
+        };
+        // TODO:走到数据库查询，返回数据
+        postToPorts(8082, '/sqlAPI/edit', dataCheckReq);
+    }
 });
 
-router.use('/add', function (req, res) {
+/* 数据库操作, 增删改查*/
+router.use('/sqlAPI/add', function (req, res) {
     let sql  ="INSERT INTO ceks_info (ContentID,Ceks,RegisterTime,StartTime,EndTime) VALUES(?,?,?,?,?);";
     let sqlParams = [
         req.body.contentID,
@@ -136,7 +113,6 @@ router.use('/add', function (req, res) {
         getDateStr(req.body.startTime),
         getDateStr(req.body.endTime)
     ];
-    console.log(sqlParams);
     query(sql,sqlParams,function (err,result) {
         if(err){
             res.json({
@@ -154,7 +130,7 @@ router.use('/add', function (req, res) {
     })
 });
 /*删除*/
-router.use('/test/delete', function (req, res) {
+router.use('/sqlAPI/delete', function (req, res) {
     let delSql = 'DELETE FROM ceks_info where ContentID='+req.body.contentID;
     query(delSql,null, function(err, rows, fields) {
         if(err){
@@ -173,7 +149,7 @@ router.use('/test/delete', function (req, res) {
     })
 });
 /* 编辑 */
-router.use('/test/edit', function (req, res) {
+router.use('/sqlAPI/edit', function (req, res) {
     let editSql = 'UPDATE ceks_info SET Ceks=?,RegisterTime=?,StartTime=?,EndTime=? WHERE ContentID ='+req.body.contentID;
     let editSqlParams = [
         req.body.ceks,
@@ -181,7 +157,6 @@ router.use('/test/edit', function (req, res) {
         getDateStr(req.body.startTime),
         getDateStr(req.body.endTime)
     ];
-    console.log(editSqlParams);
     query(editSql,editSqlParams,function (err,result) {
         if(err){
             res.json({
@@ -198,7 +173,7 @@ router.use('/test/edit', function (req, res) {
     })
 });
 /*查询*/
-router.use('/test/query', function (req, res) {
+router.use('/sqlAPI/query', function (req, res) {
     let pageNumber = req.body.pageNumber;
     let pageSize = req.body.pageSize;
     let start = (pageNumber-1)*pageSize;
@@ -229,5 +204,9 @@ router.use('/test/query', function (req, res) {
         });
     })
 });
-/*将路由模块输出*/
+
+/* 将路由模块输出 */
 module.exports = router;
+
+
+// TODO: API test接口设计
